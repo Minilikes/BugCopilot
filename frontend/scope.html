@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Scope Gate</title>
+  <meta name="description" content="Configure and authorize your bug bounty research scope." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .scope-sessions { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .scope-session-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.15s;
+    }
+    .scope-session-item.active { border-color: var(--border-glow); background: var(--accent-dim); }
+    .scope-session-info { flex: 1; min-width: 0; }
+    .scope-session-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .scope-session-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .authorization-banner {
+      background: linear-gradient(135deg, rgba(0,212,170,0.1), rgba(124,58,237,0.08));
+      border: 1px solid var(--border-glow);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .authorization-banner h2 { font-size: 16px; color: var(--accent); margin-bottom: 6px; }
+    .authorization-banner p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">🎯 Scope Gate</h1>
+        <p class="page-subtitle">Mandatory authorization and scope configuration</p>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div class="authorization-banner">
+        <h2>⚖️ Authorization Required</h2>
+        <p>BugCopilot only performs recon on targets you are explicitly authorized to test.
+        You must confirm that you have written permission from the program owner (via a public bug bounty platform, a private program invite, or explicit written permission) before any scanning begins.
+        All actions are logged locally. <strong>Unauthorized testing is illegal and unethical.</strong></p>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <!-- New session form -->
+        <div class="card card-glow">
+          <div class="card-header">
+            <div class="card-title"><span class="icon">➕</span> New Scope Session</div>
+          </div>
+          <form id="scope-form">
+            <div class="form-group">
+              <label class="form-label">Program Name *</label>
+              <input id="program-name" type="text" class="form-control" placeholder="e.g. Acme Corp" required />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Platform</label>
+                <select id="platform" class="form-control">
+                  <option value="">— Select —</option>
+                  <option>HackerOne</option>
+                  <option>Bugcrowd</option>
+                  <option>Intigriti</option>
+                  <option>YesWeHack</option>
+                  <option>Private</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Target Domain *</label>
+                <input id="target-domain" type="text" class="form-control" placeholder="e.g. example.com" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Program Scope URL</label>
+              <input id="scope-url" type="url" class="form-control" placeholder="https://hackerone.com/…" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">In-Scope Patterns</label>
+              <div class="pill-input-wrapper" id="inscope-wrapper">
+                <input class="pill-input" placeholder="Type and press Enter… e.g. *.example.com" />
+              </div>
+              <input type="hidden" id="in-scope-patterns" value="[]" />
+              <div class="form-hint">Wildcards supported: <code>*.example.com</code></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Out-of-Scope Patterns</label>
+              <div class="pill-input-wrapper" id="outscope-wrapper">
+                <input class="pill-input" placeholder="e.g. admin.example.com" />
+              </div>
+              <input type="hidden" id="out-scope-patterns" value="[]" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Authorization Note</label>
+              <input id="auth-note" type="text" class="form-control" placeholder="e.g. HackerOne program URL or private invite" />
+              <div class="form-hint">Link to the program page or reference your invitation</div>
+            </div>
+
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="authorized" required />
+                <label for="authorized">
+                  I confirm I am <strong>authorized</strong> to test this target via an explicit bug bounty program or written permission.
+                  <small>I will not perform destructive actions, DoS, or brute-force attacks, and I will stay within the defined scope.</small>
+                </label>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-full" id="create-btn">
+              <span class="btn-text">🎯 Activate Scope Session</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Existing sessions -->
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title"><span class="icon">📋</span> Past Sessions</div>
+              <button class="btn btn-ghost btn-sm" onclick="loadSessions()">↻ Refresh</button>
+            </div>
+            <div id="sessions-list">
+              <div class="empty-state" style="padding:24px">
+                <div class="empty-state-icon">📂</div>
+                <div class="empty-state-title">Loading…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-3" style="margin-top:14px">
+            <div class="card-title" style="margin-bottom:12px"><span class="icon">⚖️</span> Ethical Constraints (Always On)</div>
+            <ul style="list-style:none; display:flex; flex-direction:column; gap:8px">
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--green)">✓</span> Passive recon only (DNS, HTTP headers, crt.sh, public APIs)
+              </li>
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--green)">✓</span> Rate-limited requests (never floods)
+              </li>
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--green)">✓</span> All active steps are opt-in and explicit
+              </li>
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--red)">✗</span> No brute-force, DoS, or account enumeration
+              </li>
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--red)">✗</span> No requests to out-of-scope targets
+              </li>
+              <li class="flex gap-2" style="font-size:12px; color:var(--text-secondary)">
+                <span style="color:var(--red)">✗</span> No destructive payloads — ever
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+initPillInput('inscope-wrapper', 'in-scope-patterns');
+initPillInput('outscope-wrapper', 'out-scope-patterns');
+
+async function loadSessions() {
+  const list = document.getElementById('sessions-list');
+  try {
+    const sessions = await API.get('/scope/');
+    if (!sessions.length) {
+      list.innerHTML = `<div class="empty-state" style="padding:24px"><div class="empty-state-icon">📂</div><div class="empty-state-title">No sessions yet</div></div>`;
+      return;
+    }
+    list.innerHTML = `<div class="scope-sessions">${sessions.map(s => `
+      <div class="scope-session-item ${s.is_active ? 'active' : ''}">
+        <div style="font-size:20px">${s.authorized ? '✅' : '⚠️'}</div>
+        <div class="scope-session-info">
+          <div class="scope-session-name">${escapeHtml(s.program_name)}</div>
+          <div class="scope-session-meta">${s.platform || 'Unknown platform'} · ${s.target_domain || 'No domain'} · ${fmtDate(s.created_at)}</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          ${!s.is_active ? `<button class="btn btn-secondary btn-sm" onclick="activateScope(${s.id})">Activate</button>` : `<span class="badge badge-accent">Active</span>`}
+          <button class="btn btn-danger btn-sm" onclick="deleteScope(${s.id})">🗑</button>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  } catch (e) {
+    list.innerHTML = `<div class="alert alert-danger"><span>❌</span>${e.message}</div>`;
+  }
+}
+
+async function activateScope(id) {
+  try {
+    await API.post(`/scope/${id}/activate`, {});
+    toast('Scope session activated', 'success');
+    loadSessions();
+    loadScopeBadge();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteScope(id) {
+  if (!confirm('Delete this scope session?')) return;
+  try {
+    await API.delete(`/scope/${id}`);
+    toast('Session deleted', 'success');
+    loadSessions();
+    loadScopeBadge();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+document.getElementById('scope-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Creating…';
+
+  try {
+    const inPatterns = JSON.parse(document.getElementById('in-scope-patterns').value || '[]');
+    const outPatterns = JSON.parse(document.getElementById('out-scope-patterns').value || '[]');
+
+    await API.post('/scope/', {
+      program_name: document.getElementById('program-name').value,
+      platform: document.getElementById('platform').value,
+      target_domain: document.getElementById('target-domain').value,
+      scope_url: document.getElementById('scope-url').value,
+      auth_note: document.getElementById('auth-note').value,
+      authorized: document.getElementById('authorized').checked,
+      in_scope_patterns: inPatterns,
+      out_scope_patterns: outPatterns,
+    });
+    toast('Scope session activated! 🎯', 'success');
+    loadSessions();
+    loadScopeBadge();
+    e.target.reset();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn-text">🎯 Activate Scope Session</span>';
+  }
+});
+
+loadSessions();
+</script>
+</body>
+</html>

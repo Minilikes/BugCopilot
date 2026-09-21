@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Target Picker</title>
+  <meta name="description" content="Rank and prioritize bug bounty programs by scope, payout, and activity." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .target-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: all 0.15s;
+    }
+    .target-card:hover { border-color: var(--border-bright); transform: translateX(2px); }
+    .target-rank {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text-muted);
+      min-width: 32px;
+      text-align: center;
+    }
+    .target-rank.top1 { color: #fbbf24; }
+    .target-rank.top2 { color: #94a3b8; }
+    .target-rank.top3 { color: #b45309; }
+    .target-info { flex: 1; min-width: 0; }
+    .target-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .target-platform { font-size: 11px; color: var(--text-muted); }
+    .target-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+    .target-tag { padding: 2px 7px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; color: var(--text-secondary); }
+    .target-score-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+    .target-score-num { font-size: 22px; font-weight: 800; }
+    .target-stats { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); }
+    .target-stat span { font-weight: 600; color: var(--text-secondary); }
+    .score-pill {
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .csv-area { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .filter-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-row select { width: 150px; }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">🏆 Target Picker</h1>
+        <p class="page-subtitle">Rank bug bounty programs by opportunity score — wider scope + newer + better payout = higher priority</p>
+      </div>
+      <div class="page-header-actions">
+        <button class="btn btn-secondary btn-sm" onclick="showImport()">📥 Import CSV</button>
+        <button class="btn btn-primary btn-sm" onclick="showAddForm()">+ Add Program</button>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="rankings" onclick="switchTab('rankings', this)">Rankings</button>
+        <button class="tab-btn" data-tab="add" onclick="switchTab('add', this)" id="add-tab-btn">Add / Edit</button>
+        <button class="tab-btn" data-tab="import" onclick="switchTab('import', this)" id="import-tab-btn">Bulk Import</button>
+      </div>
+
+      <!-- Rankings tab -->
+      <div id="tab-rankings">
+        <div class="filter-row">
+          <select id="filter-platform" class="form-control" onchange="applyFilters()">
+            <option value="">All Platforms</option>
+            <option>HackerOne</option><option>Bugcrowd</option>
+            <option>Intigriti</option><option>YesWeHack</option><option>Private</option>
+          </select>
+          <select id="filter-asset" class="form-control" onchange="applyFilters()">
+            <option value="">All Asset Types</option>
+            <option value="web">Web</option>
+            <option value="api">API</option>
+            <option value="mobile">Mobile</option>
+          </select>
+          <input id="filter-tech" class="form-control" style="width:150px" placeholder="Tech tag filter…" oninput="applyFilters()" />
+          <button class="btn btn-ghost btn-sm" onclick="loadTargets()">↻ Refresh</button>
+        </div>
+
+        <div class="alert alert-info mb-3" style="margin-bottom:14px">
+          <span class="alert-icon">ℹ️</span>
+          <div>Enter program data manually (from platform UIs) — no scraping. Each platform's public API/export is the recommended data source.
+          <br><strong>Scoring:</strong> Scope breadth 30% + Payout 30% + Program newness 20% + Response rating 20%</div>
+        </div>
+
+        <div id="targets-list" style="display:flex;flex-direction:column;gap:10px">
+          <div class="empty-state">
+            <div class="empty-state-icon">🏆</div>
+            <div class="empty-state-title">Loading programs…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add form tab -->
+      <div id="tab-add" style="display:none">
+        <div class="card" style="max-width:680px">
+          <div class="card-header"><div class="card-title"><span class="icon">➕</span> Add Program</div></div>
+          <input type="hidden" id="edit-target-id" />
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Program Name *</label>
+              <input id="t-name" class="form-control" placeholder="Acme Corp" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Platform</label>
+              <select id="t-platform" class="form-control">
+                <option>HackerOne</option><option>Bugcrowd</option>
+                <option>Intigriti</option><option>YesWeHack</option><option>Private</option><option>Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Program URL</label>
+            <input id="t-url" class="form-control" placeholder="https://hackerone.com/…" />
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label class="form-label">In-Scope Assets (count)</label>
+              <input id="t-scope" type="number" class="form-control" placeholder="25" />
+              <div class="form-hint">Number of domains/URLs in scope</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Avg Payout ($)</label>
+              <input id="t-payout" type="number" class="form-control" placeholder="500" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Payout ($)</label>
+              <input id="t-maxpay" type="number" class="form-control" placeholder="5000" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Program Age (days)</label>
+              <input id="t-age" type="number" class="form-control" placeholder="365" />
+              <div class="form-hint">Days since program launched</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Response Rating (0-5)</label>
+              <input id="t-resp" type="number" class="form-control" placeholder="3.5" step="0.5" min="0" max="5" />
+              <div class="form-hint">Triager responsiveness score</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Asset Types</label>
+            <div class="pill-input-wrapper" id="assettype-wrapper">
+              <input class="pill-input" placeholder="web, api, mobile, android, ios…" />
+            </div>
+            <input type="hidden" id="t-asset-types" value="[]" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tech Stack Tags</label>
+            <div class="pill-input-wrapper" id="techtag-wrapper">
+              <input class="pill-input" placeholder="react, nodejs, aws, php…" />
+            </div>
+            <input type="hidden" id="t-tech-tags" value="[]" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea id="t-notes" class="form-control" rows="2" placeholder="Personal notes about this program…"></textarea>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-primary" onclick="saveTarget()">💾 Save Program</button>
+            <button class="btn btn-ghost" onclick="clearForm()">✕ Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bulk import tab -->
+      <div id="tab-import" style="display:none">
+        <div class="card" style="max-width:680px">
+          <div class="card-header"><div class="card-title"><span class="icon">📥</span> CSV Import</div></div>
+          <div class="alert alert-info mb-3" style="margin-bottom:14px">
+            <span>ℹ️</span>
+            <div>Paste CSV data with headers. Recommended columns:<br/>
+            <code>name,platform,scope_count,avg_payout,max_payout,program_age_days,response_rating,asset_types,tech_tags,program_url</code></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">CSV Data</label>
+            <textarea id="csv-input" class="form-control csv-area" rows="10"
+              placeholder="name,platform,scope_count,avg_payout,max_payout,program_age_days,response_rating,asset_types,tech_tags,program_url&#10;Acme Corp,HackerOne,30,500,5000,400,4.0,web|api,react|nodejs,https://hackerone.com/acme&#10;Beta Inc,Bugcrowd,10,300,3000,200,3.5,web,php|laravel,https://bugcrowd.com/beta"></textarea>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-primary" onclick="importCsv()">📥 Import</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('csv-input').value=''">Clear</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+let allTargets = [];
+
+initPillInput('assettype-wrapper', 't-asset-types');
+initPillInput('techtag-wrapper', 't-tech-tags');
+
+function switchTab(name, btn) {
+  document.querySelectorAll('#tab-rankings, #tab-add, #tab-import').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${name}`).style.display = 'block';
+  btn.classList.add('active');
+}
+function showAddForm() { switchTab('add', document.getElementById('add-tab-btn')); }
+function showImport() { switchTab('import', document.getElementById('import-tab-btn')); }
+
+function scoreColor(s) {
+  if (s >= 70) return 'var(--accent)';
+  if (s >= 50) return 'var(--amber)';
+  if (s >= 30) return 'var(--blue)';
+  return 'var(--text-muted)';
+}
+
+async function loadTargets() {
+  try {
+    allTargets = await API.get('/targets/');
+    applyFilters();
+  } catch(e) {
+    document.getElementById('targets-list').innerHTML =
+      `<div class="alert alert-danger"><span>❌</span>${e.message}</div>`;
+  }
+}
+
+function applyFilters() {
+  const platform = document.getElementById('filter-platform').value;
+  const asset = document.getElementById('filter-asset').value;
+  const tech = document.getElementById('filter-tech').value.toLowerCase();
+  let filtered = [...allTargets];
+  if (platform) filtered = filtered.filter(t => t.platform === platform);
+  if (asset) filtered = filtered.filter(t => t.asset_types.includes(asset));
+  if (tech) filtered = filtered.filter(t => t.tech_tags.some(tag => tag.toLowerCase().includes(tech)));
+  renderTargets(filtered);
+}
+
+function renderTargets(targets) {
+  const list = document.getElementById('targets-list');
+  if (!targets.length) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🏆</div><div class="empty-state-title">No programs found</div><div class="empty-state-sub">Add programs using the "Add Program" tab</div></div>`;
+    return;
+  }
+  list.innerHTML = targets.map((t, i) => {
+    const rank = i + 1;
+    const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : '';
+    const sc = t.priority_score;
+    const tags = [...(t.asset_types || []), ...(t.tech_tags || [])].slice(0, 6);
+    return `
+    <div class="target-card">
+      <div class="target-rank ${rankClass}">#${rank}</div>
+      <div class="target-info">
+        <div class="target-name">${escapeHtml(t.name)} ${t.program_url ? `<a href="${escapeHtml(t.program_url)}" target="_blank" style="font-size:11px;color:var(--accent)">↗</a>` : ''}</div>
+        <div class="target-platform">${t.platform}</div>
+        <div class="target-tags">${tags.map(tag => `<span class="target-tag">${escapeHtml(tag)}</span>`).join('')}</div>
+        <div class="target-stats" style="margin-top:6px">
+          ${t.scope_count ? `<div>📋 Scope: <span>${t.scope_count} assets</span></div>` : ''}
+          ${t.avg_payout ? `<div>💰 Avg: <span>$${t.avg_payout}</span></div>` : ''}
+          ${t.program_age_days ? `<div>📅 Age: <span>${Math.round(t.program_age_days/30)}mo</span></div>` : ''}
+          ${t.response_rating ? `<div>⭐ Resp: <span>${t.response_rating}/5</span></div>` : ''}
+        </div>
+      </div>
+      <div class="target-score-col">
+        <div class="target-score-num" style="color:${scoreColor(sc)}">${sc.toFixed(0)}</div>
+        <div style="font-size:10px;color:var(--text-muted)">/ 100</div>
+        <div style="margin-top:4px;display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="editTarget(${t.id})" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteTarget(${t.id})" title="Delete">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function saveTarget() {
+  const name = document.getElementById('t-name').value;
+  if (!name) { toast('Name required', 'error'); return; }
+  const editId = document.getElementById('edit-target-id').value;
+  const data = {
+    name,
+    platform: document.getElementById('t-platform').value,
+    program_url: document.getElementById('t-url').value,
+    scope_count: parseInt(document.getElementById('t-scope').value) || 0,
+    avg_payout: parseInt(document.getElementById('t-payout').value) || 0,
+    max_payout: parseInt(document.getElementById('t-maxpay').value) || 0,
+    program_age_days: parseInt(document.getElementById('t-age').value) || 0,
+    response_rating: parseFloat(document.getElementById('t-resp').value) || 0,
+    asset_types: JSON.parse(document.getElementById('t-asset-types').value || '[]'),
+    tech_tags: JSON.parse(document.getElementById('t-tech-tags').value || '[]'),
+    notes: document.getElementById('t-notes').value,
+  };
+  try {
+    if (editId) {
+      await API.put(`/targets/${editId}`, data);
+      toast('Program updated ✅', 'success');
+    } else {
+      await API.post('/targets/', data);
+      toast('Program added ✅', 'success');
+    }
+    clearForm();
+    loadTargets();
+    switchTab('rankings', document.querySelector('.tab-btn'));
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function editTarget(id) {
+  const t = allTargets.find(t => t.id === id);
+  if (!t) return;
+  document.getElementById('edit-target-id').value = id;
+  document.getElementById('t-name').value = t.name;
+  document.getElementById('t-platform').value = t.platform;
+  document.getElementById('t-url').value = t.program_url;
+  document.getElementById('t-scope').value = t.scope_count;
+  document.getElementById('t-payout').value = t.avg_payout;
+  document.getElementById('t-maxpay').value = t.max_payout;
+  document.getElementById('t-age').value = t.program_age_days;
+  document.getElementById('t-resp').value = t.response_rating;
+  document.getElementById('t-notes').value = t.notes;
+  showAddForm();
+}
+
+async function deleteTarget(id) {
+  if (!confirm('Delete this program?')) return;
+  try {
+    await API.delete(`/targets/${id}`);
+    toast('Deleted', 'success');
+    loadTargets();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function clearForm() {
+  document.getElementById('edit-target-id').value = '';
+  ['t-name','t-url','t-scope','t-payout','t-maxpay','t-age','t-resp','t-notes'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+}
+
+async function importCsv() {
+  const raw = document.getElementById('csv-input').value.trim();
+  if (!raw) { toast('Paste CSV data first', 'error'); return; }
+  const lines = raw.split('\n').filter(Boolean);
+  const headers = lines[0].split(',').map(h => h.trim());
+  const rows = lines.slice(1).map(line => {
+    const vals = line.split(',');
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = vals[i]?.trim() || '');
+    return {
+      name: obj.name || '',
+      platform: obj.platform || '',
+      program_url: obj.program_url || '',
+      scope_count: parseInt(obj.scope_count) || 0,
+      avg_payout: parseInt(obj.avg_payout) || 0,
+      max_payout: parseInt(obj.max_payout) || 0,
+      program_age_days: parseInt(obj.program_age_days) || 0,
+      response_rating: parseFloat(obj.response_rating) || 0,
+      asset_types: obj.asset_types ? obj.asset_types.split('|') : [],
+      tech_tags: obj.tech_tags ? obj.tech_tags.split('|') : [],
+      notes: obj.notes || '',
+    };
+  }).filter(r => r.name);
+
+  if (!rows.length) { toast('No valid rows found', 'error'); return; }
+  try {
+    const r = await API.post('/targets/import-csv', rows);
+    toast(`Imported ${r.imported} programs ✅`, 'success');
+    loadTargets();
+    switchTab('rankings', document.querySelector('.tab-btn'));
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+loadTargets();
+</script>
+</body>
+</html>

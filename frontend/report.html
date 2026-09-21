@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Report Generator</title>
+  <meta name="description" content="Generate platform-formatted bug bounty reports with CVSS calculator." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .report-layout { display: grid; grid-template-columns: 1fr 380px; gap: 20px; }
+    .cvss-widget { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .cvss-row { display: flex; flex-direction: column; gap: 4px; }
+    .cvss-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+    .cvss-select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary); border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: inherit; cursor: pointer; }
+    .cvss-score-display {
+      background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+      margin-top: 10px;
+    }
+    .cvss-score-num { font-size: 40px; font-weight: 800; letter-spacing: -2px; }
+    .cvss-score-vec { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); margin-top: 4px; word-break: break-all; }
+    .report-output {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      min-height: 200px;
+      max-height: 500px;
+      overflow-y: auto;
+      color: var(--text-primary);
+    }
+    .platform-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+    .platform-tab {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .platform-tab.active { background: var(--accent-dim); color: var(--accent); border-color: var(--border-glow); }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">📝 Report Generator</h1>
+        <p class="page-subtitle">Create platform-formatted vulnerability reports with CVSS scoring</p>
+      </div>
+      <div class="page-header-actions">
+        <select id="finding-selector" class="form-control" style="width:220px" onchange="loadFinding(this.value)">
+          <option value="">— Create New Finding —</option>
+        </select>
+        <button class="btn btn-danger btn-sm" id="delete-btn" onclick="deleteFinding()" style="display:none">🗑 Delete</button>
+        <button class="btn btn-primary" onclick="saveFinding()">💾 Save</button>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div class="report-layout">
+        <!-- Form -->
+        <div>
+          <div class="card mb-3" style="margin-bottom:16px">
+            <div class="card-header"><div class="card-title"><span class="icon">📋</span> Finding Details</div></div>
+            <div class="form-group">
+              <label class="form-label">Title *</label>
+              <input id="f-title" class="form-control" placeholder="e.g. Reflected XSS in search parameter" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Vulnerability Class</label>
+                <select id="f-class" class="form-control">
+                  <option value="">— Select —</option>
+                  <option>XSS</option><option>IDOR</option><option>SQLi</option>
+                  <option>SSRF</option><option>Auth Bypass</option><option>RCE</option>
+                  <option>CSRF</option><option>XXE</option><option>Path Traversal</option>
+                  <option>Info Disclosure</option><option>CORS</option><option>Header Injection</option>
+                  <option>Open Redirect</option><option>Business Logic</option><option>Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Severity</label>
+                <select id="f-severity" class="form-control" onchange="updateSeverityColor()">
+                  <option>Critical</option><option>High</option><option selected>Medium</option>
+                  <option>Low</option><option>Informational</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Affected Endpoint</label>
+                <input id="f-endpoint" class="form-control" placeholder="https://example.com/api/search" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Vulnerable Parameter</label>
+                <input id="f-param" class="form-control" placeholder="e.g. q, id, redirect_to" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">HTTP Method</label>
+                <select id="f-method" class="form-control">
+                  <option>GET</option><option>POST</option><option>PUT</option>
+                  <option>DELETE</option><option>PATCH</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="f-status" class="form-control">
+                  <option value="draft">Draft</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="triaged">Triaged</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3" style="margin-bottom:16px">
+            <div class="card-header"><div class="card-title"><span class="icon">📋</span> Report Content</div></div>
+            <div class="form-group">
+              <label class="form-label">Steps to Reproduce</label>
+              <textarea id="f-steps" class="form-control" rows="5"
+                placeholder="1. Navigate to https://example.com/search&#10;2. Enter the following in the q parameter…&#10;3. Observe…"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Evidence (HTTP Request/Response)</label>
+              <textarea id="f-evidence" class="form-control" rows="5"
+                placeholder="GET /search?q=hello HTTP/1.1&#10;Host: example.com&#10;…"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Impact Statement</label>
+              <textarea id="f-impact" class="form-control" rows="3"
+                placeholder="An attacker could…"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Remediation Suggestion</label>
+              <textarea id="f-remediation" class="form-control" rows="2"
+                placeholder="Implement output encoding / parameterized queries…"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Analysis Summary (from AI)</label>
+              <textarea id="f-analysis" class="form-control" rows="2" placeholder="AI assessment notes…"></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Bounty Estimate Low ($)</label>
+                <input id="f-bounty-low" type="number" class="form-control" placeholder="500" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Bounty Estimate High ($)</label>
+                <input id="f-bounty-high" type="number" class="form-control" placeholder="2000" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: CVSS + Report output -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <!-- CVSS calculator -->
+          <div class="card">
+            <div class="card-header"><div class="card-title"><span class="icon">🧮</span> CVSS 3.1 Calculator</div></div>
+            <div class="cvss-widget">
+              <div class="cvss-row">
+                <label class="cvss-label">Attack Vector (AV)</label>
+                <select class="cvss-select" id="cvss-AV" onchange="calcCvss()">
+                  <option value="N">Network (N)</option>
+                  <option value="A">Adjacent (A)</option>
+                  <option value="L">Local (L)</option>
+                  <option value="P">Physical (P)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Attack Complexity (AC)</label>
+                <select class="cvss-select" id="cvss-AC" onchange="calcCvss()">
+                  <option value="L">Low (L)</option>
+                  <option value="H">High (H)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Privileges Required (PR)</label>
+                <select class="cvss-select" id="cvss-PR" onchange="calcCvss()">
+                  <option value="N">None (N)</option>
+                  <option value="L">Low (L)</option>
+                  <option value="H">High (H)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">User Interaction (UI)</label>
+                <select class="cvss-select" id="cvss-UI" onchange="calcCvss()">
+                  <option value="N">None (N)</option>
+                  <option value="R">Required (R)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Scope (S)</label>
+                <select class="cvss-select" id="cvss-S" onchange="calcCvss()">
+                  <option value="U">Unchanged (U)</option>
+                  <option value="C">Changed (C)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Confidentiality (C)</label>
+                <select class="cvss-select" id="cvss-C" onchange="calcCvss()">
+                  <option value="N">None (N)</option>
+                  <option value="L">Low (L)</option>
+                  <option value="H">High (H)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Integrity (I)</label>
+                <select class="cvss-select" id="cvss-I" onchange="calcCvss()">
+                  <option value="N">None (N)</option>
+                  <option value="L">Low (L)</option>
+                  <option value="H">High (H)</option>
+                </select>
+              </div>
+              <div class="cvss-row">
+                <label class="cvss-label">Availability (A)</label>
+                <select class="cvss-select" id="cvss-A" onchange="calcCvss()">
+                  <option value="N">None (N)</option>
+                  <option value="L">Low (L)</option>
+                  <option value="H">High (H)</option>
+                </select>
+              </div>
+            </div>
+            <div class="cvss-score-display">
+              <div id="cvss-score-num" class="cvss-score-num" style="color:var(--text-muted)">0.0</div>
+              <div id="cvss-severity-label" style="font-size:14px;font-weight:600;color:var(--text-muted)">None</div>
+              <div id="cvss-bounty-est" style="font-size:12px;color:var(--accent);margin-top:4px"></div>
+              <div id="cvss-vector" class="cvss-score-vec">CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N</div>
+            </div>
+            <button class="btn btn-ghost btn-sm w-full mt-2" style="margin-top:10px" onclick="applyToFinding()">
+              Apply to Finding ↑
+            </button>
+          </div>
+
+          <!-- Report output -->
+          <div class="card">
+            <div class="card-header"><div class="card-title"><span class="icon">📄</span> Report Preview</div></div>
+            <div class="platform-tabs">
+              <button class="platform-tab active" onclick="previewReport('hackerone', this)">HackerOne</button>
+              <button class="platform-tab" onclick="previewReport('bugcrowd', this)">Bugcrowd</button>
+              <button class="platform-tab" onclick="previewReport('intigriti', this)">Intigriti</button>
+              <button class="platform-tab" onclick="previewReport('generic', this)">Generic</button>
+            </div>
+            <div id="report-output" class="report-output">Save the finding first to generate a report preview.</div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn btn-secondary btn-sm" onclick="copyReport()">📋 Copy</button>
+              <button class="btn btn-secondary btn-sm" onclick="downloadReport()">⬇️ Download</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duplicate check reminder -->
+      <div class="alert alert-warn" style="margin-top:16px">
+        <span class="alert-icon">🔁</span>
+        <div><strong>Before Submitting</strong> — Search for similar reports in the program's public disclosed reports on HackerOne Hacktivity, Bugcrowd Crowdstream, or Intigriti. Also check the <a href="/analysis" style="color:var(--accent)">AI Analysis page</a> for duplicate risk assessment.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+let currentFindingId = null;
+let currentPlatform = 'hackerone';
+let cvssResult = null;
+let activeScopeId = null;
+
+async function init() {
+  // Load scope
+  try {
+    const scope = await API.get('/scope/active');
+    if (scope) activeScopeId = scope.id;
+  } catch(e) {}
+
+  // Load findings for selector
+  try {
+    const findings = await API.get('/findings/');
+    const sel = document.getElementById('finding-selector');
+    findings.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = `${f.severity[0]} · ${f.title.substring(0, 40)}`;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+
+  // URL params (from analysis page)
+  const params = new URLSearchParams(location.search);
+  if (params.get('id')) {
+    document.getElementById('finding-selector').value = params.get('id');
+    loadFinding(params.get('id'));
+  } else {
+    if (params.get('title')) document.getElementById('f-title').value = params.get('title');
+    if (params.get('vuln_class')) document.getElementById('f-class').value = params.get('vuln_class');
+    if (params.get('severity')) document.getElementById('f-severity').value = params.get('severity');
+    if (params.get('analysis_summary')) document.getElementById('f-analysis').value = params.get('analysis_summary');
+    if (params.get('evidence')) document.getElementById('f-evidence').value = params.get('evidence');
+  }
+  calcCvss();
+}
+
+async function loadFinding(id) {
+  if (!id) {
+    currentFindingId = null;
+    document.getElementById('delete-btn').style.display = 'none';
+    return;
+  }
+  try {
+    const f = await API.get(`/findings/${id}`);
+    currentFindingId = f.id;
+    document.getElementById('f-title').value = f.title;
+    document.getElementById('f-class').value = f.vuln_class;
+    document.getElementById('f-severity').value = f.severity;
+    document.getElementById('f-endpoint').value = f.endpoint;
+    document.getElementById('f-param').value = f.parameter;
+    document.getElementById('f-method').value = f.http_method;
+    document.getElementById('f-status').value = f.status;
+    document.getElementById('f-steps').value = f.steps_to_reproduce;
+    document.getElementById('f-evidence').value = f.evidence;
+    document.getElementById('f-impact').value = f.impact;
+    document.getElementById('f-remediation').value = f.remediation;
+    document.getElementById('f-analysis').value = f.analysis_summary;
+    document.getElementById('f-bounty-low').value = f.bounty_low || '';
+    document.getElementById('f-bounty-high').value = f.bounty_high || '';
+    document.getElementById('delete-btn').style.display = 'inline-flex';
+
+    // Load CVSS from vector
+    if (f.cvss_vector) {
+      try {
+        const res = await API.post('/reports/cvss/parse', null);
+      } catch(e) {}
+    }
+    previewReport(currentPlatform);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveFinding() {
+  const title = document.getElementById('f-title').value;
+  if (!title) { toast('Title is required', 'error'); return; }
+
+  const data = {
+    scope_id: activeScopeId || 1,
+    title,
+    vuln_class: document.getElementById('f-class').value,
+    severity: document.getElementById('f-severity').value,
+    endpoint: document.getElementById('f-endpoint').value,
+    parameter: document.getElementById('f-param').value,
+    http_method: document.getElementById('f-method').value,
+    status: document.getElementById('f-status').value,
+    steps_to_reproduce: document.getElementById('f-steps').value,
+    evidence: document.getElementById('f-evidence').value,
+    impact: document.getElementById('f-impact').value,
+    remediation: document.getElementById('f-remediation').value,
+    analysis_summary: document.getElementById('f-analysis').value,
+    bounty_low: parseInt(document.getElementById('f-bounty-low').value) || 0,
+    bounty_high: parseInt(document.getElementById('f-bounty-high').value) || 0,
+    cvss_score: cvssResult?.score || 0,
+    cvss_vector: cvssResult?.vector || '',
+  };
+
+  try {
+    let f;
+    if (currentFindingId) {
+      f = await API.put(`/findings/${currentFindingId}`, data);
+      toast('Finding updated ✅', 'success');
+    } else {
+      f = await API.post('/findings/', data);
+      currentFindingId = f.id;
+      toast('Finding created ✅', 'success');
+      document.getElementById('delete-btn').style.display = 'inline-flex';
+      // Add to selector
+      const sel = document.getElementById('finding-selector');
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = `${f.severity[0]} · ${f.title.substring(0, 40)}`;
+      sel.appendChild(opt);
+      sel.value = f.id;
+    }
+    previewReport(currentPlatform);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteFinding() {
+  if (!currentFindingId || !confirm('Delete this finding?')) return;
+  try {
+    await API.delete(`/findings/${currentFindingId}`);
+    toast('Finding deleted', 'success');
+    location.href = '/report';
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function previewReport(platform, btn) {
+  currentPlatform = platform;
+  if (btn) {
+    document.querySelectorAll('.platform-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+  if (!currentFindingId) {
+    document.getElementById('report-output').textContent = 'Save the finding first to generate a report preview.';
+    return;
+  }
+  try {
+    const r = await API.get(`/reports/${currentFindingId}?platform=${platform}`);
+    document.getElementById('report-output').textContent = r.report;
+  } catch(e) {
+    document.getElementById('report-output').textContent = `Error: ${e.message}`;
+  }
+}
+
+async function calcCvss() {
+  const metrics = {
+    AV: document.getElementById('cvss-AV').value,
+    AC: document.getElementById('cvss-AC').value,
+    PR: document.getElementById('cvss-PR').value,
+    UI: document.getElementById('cvss-UI').value,
+    S: document.getElementById('cvss-S').value,
+    C: document.getElementById('cvss-C').value,
+    I: document.getElementById('cvss-I').value,
+    A: document.getElementById('cvss-A').value,
+  };
+  try {
+    const r = await API.post('/reports/cvss/calculate', metrics);
+    cvssResult = r;
+    const severityColors = { Critical: 'var(--sev-critical)', High: 'var(--sev-high)', Medium: 'var(--amber)', Low: 'var(--blue)', None: 'var(--text-muted)' };
+    document.getElementById('cvss-score-num').textContent = r.score.toFixed(1);
+    document.getElementById('cvss-score-num').style.color = severityColors[r.severity] || 'var(--text-muted)';
+    document.getElementById('cvss-severity-label').textContent = r.severity;
+    document.getElementById('cvss-severity-label').style.color = severityColors[r.severity] || 'var(--text-muted)';
+    document.getElementById('cvss-vector').textContent = r.vector;
+    if (r.bounty_low > 0) {
+      document.getElementById('cvss-bounty-est').textContent = `💰 Est. $${r.bounty_low}–$${r.bounty_high}`;
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function applyToFinding() {
+  if (!cvssResult) return;
+  document.getElementById('f-severity').value = cvssResult.severity;
+  document.getElementById('f-bounty-low').value = cvssResult.bounty_low;
+  document.getElementById('f-bounty-high').value = cvssResult.bounty_high;
+  toast('CVSS applied to finding', 'success');
+}
+
+function copyReport() {
+  const text = document.getElementById('report-output').textContent;
+  navigator.clipboard.writeText(text).then(() => toast('Report copied! 📋', 'success'));
+}
+
+function downloadReport() {
+  const text = document.getElementById('report-output').textContent;
+  const title = document.getElementById('f-title').value || 'finding';
+  const blob = new Blob([text], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${title.replace(/[^a-z0-9]/gi,'_').toLowerCase()}_${currentPlatform}.md`;
+  a.click();
+}
+
+init();
+</script>
+</body>
+</html>

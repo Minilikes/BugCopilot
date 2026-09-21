@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — AI Analysis</title>
+  <meta name="description" content="AI-powered vulnerability analysis chat for authorized bug bounty researchers." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .analysis-layout {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 16px;
+      height: calc(100vh - 130px);
+    }
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .chat-toolbar {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-elevated);
+    }
+    .learn-mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .learn-mode-toggle input { accent-color: var(--accent); }
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+    }
+    .quick-template {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+      width: 100%;
+      font-family: inherit;
+    }
+    .quick-template:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .quick-template .qt-label { font-weight: 600; display: block; margin-bottom: 2px; }
+    .llm-unconfigured {
+      background: var(--amber-dim);
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-size: 12px;
+      color: var(--amber);
+    }
+    .plausibility-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+    .pi-high { background: rgba(220,38,38,0.15); color: var(--red); }
+    .pi-medium { background: var(--amber-dim); color: var(--amber); }
+    .pi-low { background: var(--blue-dim); color: var(--blue); }
+    .pi-unlikely { background: var(--bg-elevated); color: var(--text-muted); }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">🤖 AI Analysis</h1>
+        <p class="page-subtitle">Paste a raw HTTP request, parameter, or observation — get structured vulnerability assessment</p>
+      </div>
+      <div id="llm-status" class="page-header-actions"></div>
+    </div>
+
+    <div class="content-area" style="padding-bottom:0; display:flex; flex-direction:column; flex:1; overflow:hidden">
+      <div class="analysis-layout">
+        <!-- Chat panel -->
+        <div class="chat-panel">
+          <div class="chat-toolbar">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary)">Analysis Chat</span>
+            <button class="btn btn-ghost btn-sm" onclick="clearChat()">↺ Clear</button>
+            <div class="learn-mode-toggle">
+              <input type="checkbox" id="learn-mode" />
+              <label for="learn-mode">🎓 Learn Mode</label>
+            </div>
+          </div>
+
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-message">
+              <div class="chat-avatar avatar-ai">🤖</div>
+              <div class="chat-bubble bubble-ai">
+                <strong>BugCopilot Analysis Assistant</strong><br/><br/>
+                Paste in a <strong>raw HTTP request/response</strong>, a suspicious <strong>parameter</strong>, or describe what you observed — I'll assess exploitability, suggest safe verification steps, estimate severity, and flag likely duplicates.<br/><br/>
+                <em style="color:var(--text-muted)">All suggestions are for authorized testing only and follow responsible disclosure principles.</em>
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-input-area">
+            <div class="chat-input-row">
+              <textarea
+                id="chat-input"
+                class="chat-input"
+                rows="3"
+                placeholder="Paste HTTP request/response, describe a parameter, or explain what you observed…"
+              ></textarea>
+              <button class="btn btn-primary" id="send-btn" onclick="sendAnalysis()">
+                <span>→</span>
+              </button>
+            </div>
+            <div class="chat-controls">
+              <span style="font-size:11px;color:var(--text-muted)">Ctrl+Enter to send</span>
+              <button class="btn btn-ghost btn-sm" onclick="sendFollowUp()">💬 Follow-up question</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Side panel -->
+        <div class="side-panel">
+          <!-- LLM unconfigured warning -->
+          <div id="llm-warn" class="llm-unconfigured" style="display:none">
+            ⚠️ <strong>LLM not configured.</strong> Add your API key to <code>.env</code> and restart.
+            <div style="margin-top:6px">Supports OpenAI, Gemini, Anthropic, or Ollama.</div>
+          </div>
+
+          <!-- Quick templates -->
+          <div class="card">
+            <div class="card-title" style="margin-bottom:12px"><span class="icon">⚡</span> Quick Templates</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <button class="quick-template" onclick="useTemplate('xss')">
+                <span class="qt-label">XSS Assessment</span>
+                Paste request with user-controlled parameter
+              </button>
+              <button class="quick-template" onclick="useTemplate('idor')">
+                <span class="qt-label">IDOR / Auth Check</span>
+                ID-based resource access observation
+              </button>
+              <button class="quick-template" onclick="useTemplate('sqli')">
+                <span class="qt-label">SQLi Indicator</span>
+                Error message or anomalous response
+              </button>
+              <button class="quick-template" onclick="useTemplate('ssrf')">
+                <span class="qt-label">SSRF Observation</span>
+                URL parameter that fetches remote resources
+              </button>
+              <button class="quick-template" onclick="useTemplate('cors')">
+                <span class="qt-label">CORS Misconfiguration</span>
+                Observed CORS headers
+              </button>
+              <button class="quick-template" onclick="useTemplate('info')">
+                <span class="qt-label">Information Disclosure</span>
+                Sensitive data in response
+              </button>
+            </div>
+          </div>
+
+          <!-- Last analysis result -->
+          <div class="card" id="result-summary" style="display:none">
+            <div class="card-title" style="margin-bottom:12px"><span class="icon">📊</span> Last Assessment</div>
+            <div id="result-summary-content"></div>
+            <div class="divider"></div>
+            <button class="btn btn-primary w-full btn-sm" onclick="createFindingFromAnalysis()">
+              + Create Finding from This
+            </button>
+          </div>
+
+          <!-- Duplicate check reminder -->
+          <div class="card">
+            <div class="card-title" style="margin-bottom:8px"><span class="icon">🔁</span> Duplicate Check</div>
+            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">Before going deeper, search for similar reports:</p>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <a href="https://hackerone.com/hacktivity" target="_blank" class="btn btn-ghost btn-sm">🔍 HackerOne Hacktivity</a>
+              <a href="https://bugcrowd.com/crowdstream" target="_blank" class="btn btn-ghost btn-sm">🔍 Bugcrowd Crowdstream</a>
+              <a href="https://www.intigriti.com/researchers/leaderboard" target="_blank" class="btn btn-ghost btn-sm">🔍 Intigriti</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+const TEMPLATES = {
+  xss: `I found a parameter that reflects user input in the response without apparent sanitization.
+
+Request:
+GET /search?q=hello HTTP/1.1
+Host: example.com
+Cookie: session=abc123
+
+Response (snippet):
+<div class="results">You searched for: hello</div>
+
+The parameter "q" reflects content directly in the page. Is this potentially exploitable as XSS?`,
+
+  idor: `I noticed a resource endpoint that uses a numeric ID parameter.
+
+Request:
+GET /api/v1/users/12345/profile HTTP/1.1
+Host: example.com
+Authorization: Bearer my-jwt-token
+
+When I change 12345 to 12346, I receive another user's profile data. Is this an IDOR?`,
+
+  sqli: `I received an unusual error response when modifying a parameter.
+
+Request:
+GET /products?category=shoes' HTTP/1.1
+Host: example.com
+
+Response:
+HTTP/1.1 500 Internal Server Error
+{"error": "You have an error in your SQL syntax near 'shoes'' at line 1"}
+
+Does this indicate SQL injection?`,
+
+  ssrf: `There's a URL parameter that appears to fetch remote content.
+
+Request:
+POST /api/webhook HTTP/1.1
+Host: example.com
+Content-Type: application/json
+
+{"url": "https://external-site.com/data", "callback": true}
+
+Could this be vulnerable to SSRF?`,
+
+  cors: `I observed these CORS headers on an authenticated API endpoint:
+
+Response headers:
+Access-Control-Allow-Origin: https://attacker.com
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Methods: GET, POST, DELETE
+
+The origin was reflected from my request. Is this exploitable?`,
+
+  info: `The API response contains what appears to be internal data.
+
+Response:
+{
+  "user": "john.doe",
+  "email": "john@internal.example.com",
+  "role": "admin",
+  "internal_id": "EMP-00432",
+  "aws_region": "us-east-1",
+  "db_host": "prod-db-01.internal"
+}
+
+Is this sensitive information disclosure?`,
+};
+
+let conversationHistory = [];
+let lastAnalysis = null;
+
+function useTemplate(key) {
+  const input = document.getElementById('chat-input');
+  input.value = TEMPLATES[key];
+  autoResize(input);
+  input.focus();
+}
+
+function clearChat() {
+  if (!conversationHistory.length && !document.getElementById('chat-messages').children.length > 1) return;
+  conversationHistory = [];
+  lastAnalysis = null;
+  document.getElementById('result-summary').style.display = 'none';
+  const msgs = document.getElementById('chat-messages');
+  msgs.innerHTML = `
+    <div class="chat-message">
+      <div class="chat-avatar avatar-ai">🤖</div>
+      <div class="chat-bubble bubble-ai">
+        Chat cleared. Paste a new HTTP request or observation to begin.
+      </div>
+    </div>`;
+}
+
+async function sendAnalysis() {
+  const input = document.getElementById('chat-input');
+  const content = input.value.trim();
+  if (!content) return;
+
+  const learnMode = document.getElementById('learn-mode').checked;
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  input.disabled = true;
+
+  addMessage('user', content);
+  input.value = '';
+  autoResize(input);
+
+  const typingEl = addTypingIndicator();
+  conversationHistory.push({ role: 'user', content });
+
+  try {
+    const result = await API.post('/analysis/analyze', {
+      content,
+      learn_mode: learnMode,
+      conversation_history: conversationHistory.slice(-6),
+    });
+
+    typingEl.remove();
+
+    if (result.error) {
+      addMessage('ai', `❌ Error: ${result.error}`);
+    } else {
+      lastAnalysis = { content, result };
+      renderAnalysisResult(result);
+      renderSummaryPanel(result);
+      conversationHistory.push({ role: 'assistant', content: JSON.stringify(result) });
+    }
+  } catch (e) {
+    typingEl.remove();
+    addMessage('ai', `❌ Request failed: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+async function sendFollowUp() {
+  const question = prompt('Ask a follow-up question:');
+  if (!question) return;
+  document.getElementById('chat-input').value = question;
+  await sendAnalysis();
+}
+
+function addMessage(role, content) {
+  const msgs = document.getElementById('chat-messages');
+  const isUser = role === 'user';
+  const div = document.createElement('div');
+  div.className = `chat-message ${isUser ? 'user' : ''}`;
+  div.innerHTML = `
+    <div class="chat-avatar ${isUser ? 'avatar-user' : 'avatar-ai'}">${isUser ? '👤' : '🤖'}</div>
+    <div class="chat-bubble ${isUser ? 'bubble-user' : 'bubble-ai'}">
+      <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;margin:0">${escapeHtml(content)}</pre>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function addTypingIndicator() {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message';
+  div.innerHTML = `
+    <div class="chat-avatar avatar-ai">🤖</div>
+    <div class="chat-bubble bubble-ai">
+      <div class="typing-indicator"><span></span><span></span><span></span></div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function renderAnalysisResult(r) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message';
+
+  const plClass = { high: 'pi-high', medium: 'pi-medium', low: 'pi-low', unlikely: 'pi-unlikely' }[r.plausibility] || 'pi-unlikely';
+  const plLabel = { high: '🔴 High Plausibility', medium: '🟡 Medium Plausibility', low: '🔵 Low Plausibility', unlikely: '⚪ Unlikely' }[r.plausibility] || r.plausibility;
+
+  const nextStepsHtml = (r.next_steps || []).map(s =>
+    `<div class="next-step-item">${escapeHtml(s.step || s)}</div>`
+  ).join('');
+
+  const learnHtml = r.learn_mode_explanation
+    ? `<div class="analysis-section"><div class="analysis-section-title">🎓 Learn Mode — Why Is This Vulnerable?</div><div style="font-size:13px;color:var(--text-secondary);line-height:1.7">${escapeHtml(r.learn_mode_explanation)}</div></div>`
+    : '';
+
+  div.innerHTML = `
+    <div class="chat-avatar avatar-ai">🤖</div>
+    <div class="chat-bubble bubble-ai structured">
+      <div class="analysis-card">
+        <div class="analysis-header">
+          <span class="plausibility-indicator ${plClass}">${plLabel}</span>
+          ${r.vulnerability_class ? `<span class="badge badge-purple">${escapeHtml(r.vulnerability_class)}</span>` : ''}
+          ${r.severity_estimate ? severityBadge(r.severity_estimate) : ''}
+          ${r.duplicate_risk === 'high' ? '<span class="badge badge-amber">⚠️ Dup Risk</span>' : ''}
+        </div>
+
+        ${r.summary ? `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${escapeHtml(r.summary)}</div>` : ''}
+
+        <div class="analysis-section">
+          <div class="analysis-section-title">🔍 Plausibility Reasoning</div>
+          <div style="font-size:13px;color:var(--text-primary);line-height:1.7">${escapeHtml(r.plausibility_reasoning || '')}</div>
+        </div>
+
+        ${nextStepsHtml ? `
+        <div class="analysis-section">
+          <div class="analysis-section-title">✅ Safe Verification Steps</div>
+          ${nextStepsHtml}
+        </div>` : ''}
+
+        ${r.duplicate_notes ? `
+        <div class="analysis-section">
+          <div class="analysis-section-title">🔁 Duplicate / Low-Value Notes</div>
+          <div style="font-size:13px;color:var(--amber)">${escapeHtml(r.duplicate_notes)}</div>
+        </div>` : ''}
+
+        ${r.cvss_range || r.bounty_tier ? `
+        <div class="analysis-section">
+          <div class="analysis-section-title">💰 Severity & Bounty Estimate</div>
+          <div style="font-size:13px;color:var(--text-primary)">
+            ${r.cvss_range ? `CVSS Range: <strong>${escapeHtml(r.cvss_range)}</strong>` : ''}
+            ${r.bounty_tier ? ` · Estimated: <strong style="color:var(--accent)">${escapeHtml(r.bounty_tier)}</strong>` : ''}
+          </div>
+        </div>` : ''}
+
+        ${learnHtml}
+      </div>
+    </div>`;
+
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function renderSummaryPanel(r) {
+  const panel = document.getElementById('result-summary');
+  const content = document.getElementById('result-summary-content');
+  panel.style.display = 'block';
+  const plClass = { high: 'badge-critical', medium: 'badge-medium', low: 'badge-low', unlikely: 'badge-info' }[r.plausibility] || 'badge-info';
+  content.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="flex gap-2">
+        <span class="badge ${plClass}">${r.plausibility || '?'}</span>
+        ${r.vulnerability_class ? `<span class="badge badge-purple">${escapeHtml(r.vulnerability_class)}</span>` : ''}
+      </div>
+      ${r.severity_estimate ? `<div>${severityBadge(r.severity_estimate)} ${r.cvss_range ? `<span style="font-size:12px;color:var(--text-muted)">CVSS ${escapeHtml(r.cvss_range)}</span>` : ''}</div>` : ''}
+      ${r.bounty_tier ? `<div style="font-size:12px;color:var(--accent)">💰 ${escapeHtml(r.bounty_tier)}</div>` : ''}
+      ${r.summary ? `<div style="font-size:12px;color:var(--text-secondary)">${escapeHtml(r.summary)}</div>` : ''}
+    </div>
+  `;
+}
+
+function createFindingFromAnalysis() {
+  if (!lastAnalysis) return;
+  const r = lastAnalysis.result;
+  const params = new URLSearchParams({
+    title: r.vulnerability_class ? `${r.vulnerability_class} — [Endpoint]` : 'New Finding',
+    vuln_class: r.vulnerability_class || '',
+    severity: r.severity_estimate || 'Medium',
+    analysis_summary: r.plausibility_reasoning || '',
+    evidence: lastAnalysis.content,
+  });
+  location.href = `/report?${params.toString()}`;
+}
+
+async function checkLlmStatus() {
+  try {
+    const s = await API.get('/analysis/status');
+    if (!s.configured) {
+      document.getElementById('llm-warn').style.display = 'block';
+      document.getElementById('llm-status').innerHTML =
+        `<span class="badge badge-high">⚠️ LLM Not Configured</span>`;
+    } else {
+      document.getElementById('llm-status').innerHTML =
+        `<span class="badge badge-accent">🤖 ${escapeHtml(s.model)}</span>`;
+    }
+  } catch (e) {}
+}
+
+// Keyboard shortcut: Ctrl+Enter sends
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('chat-input');
+  input.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      sendAnalysis();
+    }
+    autoResize(input);
+  });
+  input.addEventListener('input', () => autoResize(input));
+
+  // Pre-fill from recon page
+  const prefill = localStorage.getItem('analysis_prefill');
+  if (prefill) {
+    input.value = prefill;
+    autoResize(input);
+    localStorage.removeItem('analysis_prefill');
+  }
+  checkLlmStatus();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Disclosure Timeline</title>
+  <meta name="description" content="Track submission dates, SLA deadlines, and escalation reminders for your findings." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .timeline-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; }
+    .finding-picker-list { display: flex; flex-direction: column; gap: 6px; max-height: 600px; overflow-y: auto; }
+    .finding-picker-item {
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .finding-picker-item:hover { border-color: var(--border-bright); }
+    .finding-picker-item.active { border-color: var(--accent); background: var(--accent-dim); }
+    .finding-picker-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .finding-picker-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .sla-card {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .sla-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      text-align: center;
+    }
+    .sla-item.overdue { border-color: rgba(239,68,68,0.5); background: var(--red-dim); }
+    .sla-item.due_soon { border-color: rgba(245,158,11,0.5); background: var(--amber-dim); }
+    .sla-item.on_track { border-color: rgba(16,185,129,0.3); background: var(--green-dim); }
+    .sla-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+    .sla-date { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .sla-status { font-size: 11px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">📅 Disclosure Timeline</h1>
+        <p class="page-subtitle">Track submission dates, SLA deadlines, and escalation windows</p>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div class="timeline-layout">
+        <!-- Finding picker -->
+        <div>
+          <div class="card">
+            <div class="card-header"><div class="card-title"><span class="icon">📋</span> Findings</div></div>
+            <div id="finding-picker" class="finding-picker-list">
+              <div class="empty-state" style="padding:24px">
+                <div class="empty-state-icon">🔍</div>
+                <div class="empty-state-title">Loading…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timeline detail -->
+        <div id="timeline-detail">
+          <div class="empty-state">
+            <div class="empty-state-icon">📅</div>
+            <div class="empty-state-title">Select a finding</div>
+            <div class="empty-state-sub">Click a finding on the left to view or add timeline events</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+let selectedFindingId = null;
+let selectedFinding = null;
+
+async function loadFindings() {
+  try {
+    const findings = await API.get('/findings/');
+    const list = document.getElementById('finding-picker');
+    if (!findings.length) {
+      list.innerHTML = `<div class="empty-state" style="padding:24px"><div class="empty-state-icon">🐛</div><div class="empty-state-title">No findings yet</div></div>`;
+      return;
+    }
+    list.innerHTML = findings.map(f => `
+      <div class="finding-picker-item ${selectedFindingId === f.id ? 'active' : ''}" onclick="selectFinding(${f.id}, this)">
+        <div class="finding-picker-title">${escapeHtml(f.title)}</div>
+        <div class="finding-picker-meta">${f.severity} · ${statusChip(f.status)}</div>
+      </div>
+    `).join('');
+    // Store for later
+    window._findings = findings;
+  } catch(e) { console.error(e); }
+}
+
+async function selectFinding(id, el) {
+  document.querySelectorAll('.finding-picker-item').forEach(i => i.classList.remove('active'));
+  if (el) el.classList.add('active');
+  selectedFindingId = id;
+  selectedFinding = window._findings?.find(f => f.id === id);
+  await renderTimeline(id);
+}
+
+async function renderTimeline(findingId) {
+  const detail = document.getElementById('timeline-detail');
+  const f = selectedFinding;
+
+  // Load events and SLA
+  let entries = [];
+  let sla = null;
+  try { entries = await API.get(`/timeline/${findingId}`); } catch(e) {}
+  try { sla = await API.get(`/timeline/${findingId}/sla?platform=${encodeURIComponent('HackerOne')}`); } catch(e) {}
+
+  const slaHtml = sla && sla.deadlines ? `
+    <div class="sla-card">
+      ${Object.entries(sla.deadlines).map(([type, d]) => `
+        <div class="sla-item ${d.status}">
+          <div class="sla-label">${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+          <div class="sla-date">${fmtDate(d.date)}</div>
+          <div class="sla-status">${d.status === 'overdue' ? '🔴 Overdue' : d.status === 'due_soon' ? '🟡 Due soon' : '✅ On track'}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
+      ${sla.days_since_submission} days since submission · SLA platform: HackerOne
+    </div>
+  ` : '';
+
+  const timelineHtml = entries.length ? `
+    <div class="timeline">
+      ${entries.map(e => {
+        const statusMap = { submitted: 'on_track', triaged: 'on_track', resolved: 'on_track', paid: 'on_track', escalated: 'overdue', custom: '' };
+        return `
+          <div class="timeline-item">
+            <div class="timeline-dot ${statusMap[e.event_type] || ''}"></div>
+            <div class="timeline-date">${fmtDateTime(e.event_date)}</div>
+            <div class="timeline-event">${escapeHtml(e.event_type.charAt(0).toUpperCase() + e.event_type.slice(1))}</div>
+            ${e.notes ? `<div class="timeline-notes">${escapeHtml(e.notes)}</div>` : ''}
+            <button class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="deleteEntry(${e.id})">🗑</button>
+          </div>`;
+      }).join('')}
+    </div>
+  ` : '<div class="empty-state" style="padding:20px"><div class="empty-state-icon">📅</div><div class="empty-state-title">No events yet</div></div>';
+
+  detail.innerHTML = `
+    <div>
+      <div class="card mb-3" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📋</span> ${escapeHtml(f?.title || 'Finding')}</div>
+          <div>
+            ${f ? severityBadge(f.severity) : ''}
+            ${f ? statusChip(f.status) : ''}
+          </div>
+        </div>
+        ${slaHtml}
+        <div class="card-title" style="margin-bottom:12px"><span class="icon">📅</span> Timeline Events</div>
+        ${timelineHtml}
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title"><span class="icon">➕</span> Add Event</div></div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Event Type</label>
+            <select id="evt-type" class="form-control">
+              <option value="submitted">Submitted</option>
+              <option value="triaged">Triaged</option>
+              <option value="bounty_offered">Bounty Offered</option>
+              <option value="resolved">Resolved</option>
+              <option value="paid">Paid</option>
+              <option value="escalated">Escalated</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Date</label>
+            <input id="evt-date" type="datetime-local" class="form-control" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <input id="evt-notes" class="form-control" placeholder="Optional notes…" />
+        </div>
+        <button class="btn btn-primary" onclick="addEvent()">+ Add Event</button>
+      </div>
+    </div>
+  `;
+
+  // Set default date to now
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  document.getElementById('evt-date').value = now.toISOString().slice(0, 16);
+}
+
+async function addEvent() {
+  if (!selectedFindingId) return;
+  const dateVal = document.getElementById('evt-date').value;
+  if (!dateVal) { toast('Select a date', 'error'); return; }
+  const data = {
+    finding_id: selectedFindingId,
+    event_type: document.getElementById('evt-type').value,
+    event_date: new Date(dateVal).toISOString(),
+    notes: document.getElementById('evt-notes').value,
+  };
+  try {
+    await API.post(`/timeline/${selectedFindingId}`, data);
+    toast('Event added ✅', 'success');
+    renderTimeline(selectedFindingId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteEntry(entryId) {
+  if (!confirm('Delete this event?')) return;
+  try {
+    await API.delete(`/timeline/entry/${entryId}`);
+    toast('Deleted', 'success');
+    renderTimeline(selectedFindingId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+loadFindings();
+</script>
+</body>
+</html>

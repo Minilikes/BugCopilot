@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Recon</title>
+  <meta name="description" content="Passive recon module — subdomain enumeration, tech fingerprinting, JS parsing, header checks, CVE lookup." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .recon-modules {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .module-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.15s;
+    }
+    .module-card:hover { border-color: var(--border-bright); }
+    .module-header { display: flex; align-items: center; gap: 10px; }
+    .module-icon { font-size: 20px; }
+    .module-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .module-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .results-tabs-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 14px; overflow-x: auto; }
+    .result-type-btn {
+      padding: 8px 14px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .result-type-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .result-type-btn:hover { color: var(--text-primary); }
+    .result-count {
+      background: var(--bg-elevated);
+      padding: 1px 5px;
+      border-radius: 10px;
+      font-size: 10px;
+      margin-left: 4px;
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div><div class="sidebar-logo-text">BugCopilot</div><div class="sidebar-logo-sub">Bug Bounty Research</div></div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div><div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">🔍 Recon Module</h1>
+        <p class="page-subtitle">Passive, opt-in reconnaissance — every step requires your explicit action</p>
+      </div>
+      <div class="page-header-actions">
+        <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Refresh Results</button>
+        <button class="btn btn-danger btn-sm" onclick="clearResults()">🗑 Clear All</button>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div id="scope-warning" class="scope-warning" style="display:none">
+        <div class="scope-warning-icon">⚠️</div>
+        <div class="scope-warning-text">
+          <h3>No Active Authorized Scope</h3>
+          <p>You must set up and authorize a scope session before running any recon.</p>
+        </div>
+        <a href="/scope" class="btn btn-danger btn-sm">Set Up Scope →</a>
+      </div>
+
+      <!-- Recon modules -->
+      <div class="recon-modules" id="recon-modules">
+        <!-- Module: Subdomain Enum -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">🌐</span>
+            <div class="module-name">Subdomain Enumeration</div>
+          </div>
+          <div class="module-desc">Certificate transparency (crt.sh) + DNS resolution. Finds active subdomains for the target domain.</div>
+          <button class="btn btn-primary btn-sm" id="btn-subdomains" onclick="runSubdomains()">
+            <span class="btn-text">▶ Run</span>
+          </button>
+        </div>
+
+        <!-- Module: Tech Stack -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">🔬</span>
+            <div class="module-name">Tech Fingerprinting</div>
+          </div>
+          <div class="module-desc">Detects frameworks, libraries, and servers via HTTP headers and HTML analysis.</div>
+          <input id="tech-url" class="form-control" placeholder="https://example.com" />
+          <button class="btn btn-primary btn-sm" id="btn-tech" onclick="runTech()">
+            <span class="btn-text">▶ Run</span>
+          </button>
+        </div>
+
+        <!-- Module: JS Parse -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">📜</span>
+            <div class="module-name">JS File Parser</div>
+          </div>
+          <div class="module-desc">Fetches in-scope JS files, extracts hidden API endpoints and potential hardcoded secrets for human review.</div>
+          <input id="js-base-url" class="form-control" placeholder="Base URL (e.g. https://example.com)" />
+          <textarea id="js-urls" class="form-control" rows="2" placeholder="JS file URLs (one per line)"></textarea>
+          <button class="btn btn-primary btn-sm" id="btn-js" onclick="runJsParse()">
+            <span class="btn-text">▶ Parse JS Files</span>
+          </button>
+        </div>
+
+        <!-- Module: robots/sitemap -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">🤖</span>
+            <div class="module-name">robots.txt / Sitemap</div>
+          </div>
+          <div class="module-desc">Fetches robots.txt disallow rules and sitemap.xml URLs for interesting paths.</div>
+          <input id="crawl-url" class="form-control" placeholder="https://example.com" />
+          <button class="btn btn-primary btn-sm" id="btn-crawl" onclick="runCrawl()">
+            <span class="btn-text">▶ Crawl</span>
+          </button>
+        </div>
+
+        <!-- Module: Headers -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">🔒</span>
+            <div class="module-name">Header & Cookie Check</div>
+          </div>
+          <div class="module-desc">Checks for missing/weak CSP, HSTS, CORS, X-Frame-Options, and cookie security flags.</div>
+          <input id="headers-url" class="form-control" placeholder="https://example.com" />
+          <button class="btn btn-primary btn-sm" id="btn-headers" onclick="runHeaders()">
+            <span class="btn-text">▶ Check Headers</span>
+          </button>
+        </div>
+
+        <!-- Module: CVE Lookup -->
+        <div class="module-card">
+          <div class="module-header">
+            <span class="module-icon">🚨</span>
+            <div class="module-name">CVE Lookup</div>
+          </div>
+          <div class="module-desc">Queries NVD / OSV.dev for known CVEs matching a detected technology and version.</div>
+          <div class="form-row" style="gap:8px">
+            <input id="cve-tech" class="form-control" placeholder="e.g. jquery" />
+            <input id="cve-version" class="form-control" placeholder="e.g. 1.8.0" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="btn-cve" onclick="runCve()">
+            <span class="btn-text">▶ Lookup CVEs</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📊</span> Interesting Targets</div>
+          <div style="font-size:12px;color:var(--text-muted)">Ranked by priority score (10 = highest priority)</div>
+        </div>
+
+        <div class="results-tabs-bar">
+          <button class="result-type-btn active" data-type="" onclick="filterResults(this, '')">All <span id="count-all" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="subdomain" onclick="filterResults(this, 'subdomain')">Subdomains <span id="count-subdomain" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="js_secret" onclick="filterResults(this, 'js_secret')">🔑 Secrets <span id="count-js_secret" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="js_endpoint" onclick="filterResults(this, 'js_endpoint')">Endpoints <span id="count-js_endpoint" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="header_issue" onclick="filterResults(this, 'header_issue')">Header Issues <span id="count-header_issue" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="cve" onclick="filterResults(this, 'cve')">CVEs <span id="count-cve" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="tech" onclick="filterResults(this, 'tech')">Tech <span id="count-tech" class="result-count">0</span></button>
+          <button class="result-type-btn" data-type="robots" onclick="filterResults(this, 'robots')">Crawl <span id="count-robots" class="result-count">0</span></button>
+        </div>
+
+        <div id="results-container">
+          <div class="empty-state">
+            <div class="empty-state-icon">🔍</div>
+            <div class="empty-state-title">No results yet</div>
+            <div class="empty-state-sub">Run a recon module above to start collecting targets</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/assets/app.js"></script>
+<script>
+let allResults = [];
+let activeType = '';
+
+async function checkScope() {
+  try {
+    const scope = await API.get('/scope/active');
+    if (!scope || !scope.authorized) {
+      document.getElementById('scope-warning').style.display = 'flex';
+      document.querySelectorAll('.module-card .btn').forEach(b => b.disabled = true);
+      return null;
+    }
+    // Pre-fill URLs from scope
+    if (scope.target_domain) {
+      const url = `https://${scope.target_domain}`;
+      document.getElementById('tech-url').value = url;
+      document.getElementById('crawl-url').value = url;
+      document.getElementById('headers-url').value = url;
+      document.getElementById('js-base-url').value = url;
+    }
+    return scope;
+  } catch (e) { return null; }
+}
+
+function setRunning(btnId, running) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = running;
+  btn.innerHTML = running
+    ? '<span class="spinner"></span> Running…'
+    : '<span class="btn-text">▶ Run</span>';
+}
+
+async function runWithBtn(btnId, fn) {
+  setRunning(btnId, true);
+  try { await fn(); }
+  catch (e) { toast(`Error: ${e.message}`, 'error'); }
+  finally {
+    setRunning(btnId, false);
+    await loadResults();
+  }
+}
+
+async function runSubdomains() {
+  await runWithBtn('btn-subdomains', async () => {
+    const r = await API.post('/recon/subdomains', {});
+    toast(`Found ${r.count} subdomains`, r.count > 0 ? 'success' : 'info');
+  });
+}
+
+async function runTech() {
+  const url = document.getElementById('tech-url').value;
+  if (!url) { toast('Enter a URL', 'error'); return; }
+  document.getElementById('btn-tech').innerHTML = '<span class="spinner"></span>';
+  document.getElementById('btn-tech').disabled = true;
+  try {
+    const r = await API.post('/recon/tech-stack', { url });
+    const techCount = Object.keys(r.result.technologies || {}).length;
+    toast(`Detected ${techCount} technologies`, 'success');
+    await loadResults();
+  } catch (e) { toast(e.message, 'error'); }
+  finally {
+    document.getElementById('btn-tech').disabled = false;
+    document.getElementById('btn-tech').innerHTML = '<span class="btn-text">▶ Run</span>';
+  }
+}
+
+async function runJsParse() {
+  const baseUrl = document.getElementById('js-base-url').value;
+  const jsText = document.getElementById('js-urls').value;
+  const jsUrls = jsText.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!baseUrl) { toast('Enter base URL', 'error'); return; }
+  await runWithBtn('btn-js', async () => {
+    const r = await API.post('/recon/js-parse', { base_url: baseUrl, js_urls: jsUrls });
+    toast(`Found ${r.count} JS findings`, r.count > 0 ? 'success' : 'info');
+  });
+}
+
+async function runCrawl() {
+  const url = document.getElementById('crawl-url').value;
+  if (!url) { toast('Enter a URL', 'error'); return; }
+  await runWithBtn('btn-crawl', async () => {
+    const r = await API.post('/recon/crawl', { url });
+    toast(`Crawl: ${r.count} result(s)`, 'success');
+  });
+}
+
+async function runHeaders() {
+  const url = document.getElementById('headers-url').value;
+  if (!url) { toast('Enter a URL', 'error'); return; }
+  await runWithBtn('btn-headers', async () => {
+    const r = await API.post('/recon/headers', { url });
+    toast(`Found ${r.count} header issue(s)`, r.count > 0 ? 'success' : 'info');
+  });
+}
+
+async function runCve() {
+  const tech = document.getElementById('cve-tech').value;
+  const version = document.getElementById('cve-version').value;
+  if (!tech) { toast('Enter technology name', 'error'); return; }
+  await runWithBtn('btn-cve', async () => {
+    const r = await API.post('/recon/cve-lookup', { tech_name: tech, version });
+    toast(`Found ${r.cves.length} CVE(s) for ${tech}`, 'success');
+  });
+}
+
+async function loadResults() {
+  try {
+    allResults = await API.get('/recon/results');
+    updateCounts();
+    renderResults(activeType ? allResults.filter(r => r.result_type === activeType) : allResults);
+  } catch (e) { /* ignore */ }
+}
+
+function updateCounts() {
+  const types = ['subdomain', 'js_secret', 'js_endpoint', 'header_issue', 'cve', 'tech', 'robots'];
+  document.getElementById('count-all').textContent = allResults.length;
+  types.forEach(t => {
+    const el = document.getElementById(`count-${t}`);
+    if (el) el.textContent = allResults.filter(r => r.result_type === t).length;
+  });
+}
+
+function filterResults(btn, type) {
+  document.querySelectorAll('.result-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeType = type;
+  renderResults(type ? allResults.filter(r => r.result_type === type) : allResults);
+}
+
+function renderResults(results) {
+  const container = document.getElementById('results-container');
+  if (!results.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔍</div><div class="empty-state-title">No results</div></div>`;
+    return;
+  }
+  container.innerHTML = `<div class="recon-grid">${results.map(r => {
+    const sc = r.score;
+    const scClass = sc >= 7 ? 'score-high' : sc >= 4 ? 'score-medium' : 'score-low';
+    const typeLabel = {
+      subdomain:'🌐', js_secret:'🔑', js_endpoint:'📜', header_issue:'🔒', cve:'🚨', tech:'🔬', robots:'🤖'
+    }[r.result_type] || '📄';
+    let dataHtml = '';
+    if (r.result_type === 'cve' && r.data.cves) {
+      dataHtml = r.data.cves.slice(0,3).map(c => `
+        <div style="margin-top:6px; font-size:11px; padding:6px 8px; background:var(--bg-elevated); border-radius:4px">
+          <a href="${escapeHtml(c.url)}" target="_blank" style="color:var(--accent);font-weight:600">${escapeHtml(c.cve_id)}</a>
+          — CVSS <strong style="color:${c.cvss_score>=7?'var(--red)':c.cvss_score>=4?'var(--amber)':'var(--blue)'}">${c.cvss_score}</strong>
+          <div style="color:var(--text-muted);margin-top:3px">${escapeHtml(c.description.substring(0,120))}…</div>
+        </div>
+      `).join('');
+    } else if (r.data.endpoints) {
+      dataHtml = `<div style="margin-top:6px;max-height:100px;overflow-y:auto">${r.data.endpoints.slice(0,10).map(e => `<code style="display:block;margin:2px 0">${escapeHtml(e)}</code>`).join('')}</div>`;
+    } else if (r.data.interesting_paths && r.data.interesting_paths.length) {
+      dataHtml = `<div style="margin-top:6px">${r.data.interesting_paths.map(p => `<code style="display:block;margin:2px 0">${escapeHtml(p)}</code>`).join('')}</div>`;
+    } else if (r.data.snippet) {
+      dataHtml = `<div style="margin-top:6px; font-size:11px; color:var(--amber); background:var(--amber-dim); padding:6px 8px; border-radius:4px">⚠️ ${escapeHtml(r.data.note || '')}</div>`;
+    }
+    return `
+      <div class="recon-item">
+        <div class="recon-item-header">
+          <div class="recon-item-title">${typeLabel} ${escapeHtml(r.title || r.target)}</div>
+          <span class="score-badge ${scClass}">${sc}/10</span>
+        </div>
+        <div class="recon-item-target">${escapeHtml(r.target)}</div>
+        <div class="score-bar-track"><div class="score-bar-fill" style="width:${sc*10}%"></div></div>
+        ${r.score_reason ? `<div class="recon-item-reason" style="margin-top:6px">${escapeHtml(r.score_reason)}</div>` : ''}
+        ${dataHtml}
+        <div style="margin-top:8px">
+          <button class="btn btn-ghost btn-sm" onclick="analyzeResult(${escapeHtml(JSON.stringify(JSON.stringify(r)))})">🤖 Analyze</button>
+        </div>
+      </div>
+    `;
+  }).join('')}</div>`;
+}
+
+function analyzeResult(rJson) {
+  const r = JSON.parse(rJson);
+  const summary = `Recon finding: ${r.title}\nTarget: ${r.target}\nType: ${r.result_type}\nScore: ${r.score}/10\nReason: ${r.score_reason}\nData: ${JSON.stringify(r.data, null, 2)}`;
+  localStorage.setItem('analysis_prefill', summary);
+  location.href = '/analysis';
+}
+
+async function clearResults() {
+  if (!confirm('Clear all recon results for the current scope?')) return;
+  try {
+    await API.delete('/recon/results');
+    toast('Results cleared', 'success');
+    allResults = [];
+    renderResults([]);
+    updateCounts();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+checkScope();
+loadResults();
+</script>
+</body>
+</html>

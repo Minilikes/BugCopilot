@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BugCopilot — Dashboard</title>
+  <meta name="description" content="AI-assisted bug bounty research tool for authorized security researchers." />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    .findings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 14px;
+    }
+    .finding-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      transition: all 0.15s;
+      cursor: pointer;
+    }
+    .finding-card:hover {
+      border-color: var(--border-bright);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-card);
+    }
+    .finding-card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+    .finding-card-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .finding-card-endpoint {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .finding-card-bounty {
+      margin-left: auto;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .filter-bar select {
+      width: auto;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🐛</div>
+      <div>
+        <div class="sidebar-logo-text">BugCopilot</div>
+        <div class="sidebar-logo-sub">Bug Bounty Research</div>
+      </div>
+    </div>
+    <div id="scope-badge" class="sidebar-scope-badge unauthorized">
+      <div class="label">Current Scope</div>
+      <div class="value">Loading…</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-section-label">Overview</div>
+      <a href="/" class="nav-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/scope" class="nav-link"><span class="nav-icon">🎯</span> Scope Gate</a>
+
+      <div class="sidebar-section-label">Recon & Analysis</div>
+      <a href="/recon" class="nav-link"><span class="nav-icon">🔍</span> Recon</a>
+      <a href="/analysis" class="nav-link"><span class="nav-icon">🤖</span> AI Analysis</a>
+      <a href="/report" class="nav-link"><span class="nav-icon">📝</span> Reports</a>
+
+      <div class="sidebar-section-label">Workflow</div>
+      <a href="/timeline" class="nav-link"><span class="nav-icon">📅</span> Timeline</a>
+      <a href="/targets" class="nav-link"><span class="nav-icon">🏆</span> Target Picker</a>
+    </nav>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 class="page-title">Dashboard</h1>
+        <p class="page-subtitle">Your findings, bounties, and research overview</p>
+      </div>
+      <div class="page-header-actions">
+        <a href="/scope" class="btn btn-ghost btn-sm">⚙️ Manage Scope</a>
+        <a href="/report" class="btn btn-primary btn-sm">+ New Finding</a>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <!-- Scope warning -->
+      <div id="scope-warning" class="scope-warning" style="display:none">
+        <div class="scope-warning-icon">⚠️</div>
+        <div class="scope-warning-text">
+          <h3>No Active Scope Session</h3>
+          <p>Set up an authorized scope session before starting any recon or analysis.</p>
+        </div>
+        <a href="/scope" class="btn btn-danger btn-sm">Set Up Scope</a>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid">
+        <div class="stat-card accent">
+          <div class="stat-card-icon">🐛</div>
+          <div id="stat-total" class="stat-card-value">—</div>
+          <div class="stat-card-label">Total Findings</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-card-icon">🔴</div>
+          <div id="stat-critical" class="stat-card-value">—</div>
+          <div class="stat-card-label">Critical / High</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-card-icon">⏳</div>
+          <div id="stat-submitted" class="stat-card-value">—</div>
+          <div class="stat-card-label">Submitted</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-card-icon">💰</div>
+          <div id="stat-paid" class="stat-card-value">—</div>
+          <div class="stat-card-label">Total Earned</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-icon">📈</div>
+          <div id="stat-potential" class="stat-card-value">—</div>
+          <div class="stat-card-label">Potential (Pending)</div>
+        </div>
+      </div>
+
+      <!-- Findings list -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span class="icon">📋</span> All Findings</div>
+          <div class="filter-bar">
+            <select id="filter-status" class="form-control" style="width:130px">
+              <option value="">All Status</option>
+              <option>draft</option>
+              <option>submitted</option>
+              <option>triaged</option>
+              <option>resolved</option>
+              <option>paid</option>
+            </select>
+            <select id="filter-severity" class="form-control" style="width:130px">
+              <option value="">All Severity</option>
+              <option>Critical</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+              <option>Informational</option>
+            </select>
+          </div>
+        </div>
+        <div id="findings-container">
+          <div class="empty-state">
+            <div class="empty-state-icon">🔎</div>
+            <div class="empty-state-title">Loading findings…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duplicate check reminder -->
+      <div class="alert alert-warn mt-2" style="margin-top:16px">
+        <span class="alert-icon">🔁</span>
+        <div>
+          <strong>Duplicate Check Reminder</strong> — Before submitting any finding, search the program's publicly disclosed reports on HackerOne, Bugcrowd, or Intigriti to avoid wasting time on known issues.
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="/assets/app.js"></script>
+<script>
+let allFindings = [];
+
+async function loadStats() {
+  try {
+    const stats = await API.get('/findings/stats');
+    document.getElementById('stat-total').textContent = stats.total;
+    const critHigh = (stats.by_severity['Critical'] || 0) + (stats.by_severity['High'] || 0);
+    document.getElementById('stat-critical').textContent = critHigh;
+    document.getElementById('stat-submitted').textContent = stats.by_status['submitted'] || 0;
+    document.getElementById('stat-paid').textContent = fmtCurrency(stats.total_bounty_paid);
+    document.getElementById('stat-potential').textContent =
+      `${fmtCurrency(stats.total_bounty_potential_low)}–${fmtCurrency(stats.total_bounty_potential_high)}`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function loadFindings() {
+  const status = document.getElementById('filter-status').value;
+  const severity = document.getElementById('filter-severity').value;
+  let path = '/findings?';
+  if (status) path += `status=${status}&`;
+  if (severity) path += `severity=${severity}&`;
+
+  try {
+    allFindings = await API.get(path.replace(/&$/, '').replace(/\?$/, ''));
+    renderFindings(allFindings);
+  } catch (e) {
+    document.getElementById('findings-container').innerHTML =
+      `<div class="alert alert-danger"><span>❌</span> Failed to load findings: ${e.message}</div>`;
+  }
+}
+
+function renderFindings(findings) {
+  const container = document.getElementById('findings-container');
+  if (!findings.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🐛</div>
+        <div class="empty-state-title">No findings yet</div>
+        <div class="empty-state-sub">Start a recon session and use AI Analysis to find vulnerabilities</div>
+      </div>`;
+    return;
+  }
+  container.innerHTML = `<div class="findings-grid">${findings.map(f => `
+    <div class="finding-card" onclick="location.href='/report?id=${f.id}'">
+      <div class="finding-card-title">${escapeHtml(f.title)}</div>
+      <div class="finding-card-meta">
+        ${severityBadge(f.severity)}
+        ${statusChip(f.status)}
+        ${f.vuln_class ? `<span class="badge badge-purple">${escapeHtml(f.vuln_class)}</span>` : ''}
+        ${f.bounty_low ? `<span class="finding-card-bounty">${fmtCurrency(f.bounty_low)}+</span>` : ''}
+      </div>
+      <div class="finding-card-endpoint">${escapeHtml(f.endpoint || '—')}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+async function checkScope() {
+  try {
+    const scope = await API.get('/scope/active');
+    if (!scope || !scope.authorized) {
+      document.getElementById('scope-warning').style.display = 'flex';
+    }
+  } catch (e) {}
+}
+
+document.getElementById('filter-status').addEventListener('change', loadFindings);
+document.getElementById('filter-severity').addEventListener('change', loadFindings);
+
+checkScope();
+loadStats();
+loadFindings();
+</script>
+</body>
+</html>
